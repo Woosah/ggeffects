@@ -9,6 +9,9 @@ select_prediction_method <- function(fun, model, expanded_frame, ci.lvl, type, f
   } else if (fun == "svyglm.nb") {
     # survey-glm.nb-objects -----
     fitfram <- get_predictions_svyglmnb(model, expanded_frame, ci.lvl, linv, ...)
+  } else if (fun == "brmsfit") {
+    # brmsfit-objects -----
+    fitfram <- get_predictions_brmsfit(model, expanded_frame, ci.lvl, type, faminfo, ppd, ...)
   } else if (fun == "stanreg") {
     # stan-objects -----
     fitfram <- get_predictions_stanreg(model, expanded_frame, ci.lvl, type, faminfo, ppd, ...)
@@ -368,6 +371,89 @@ get_predictions_merMod <- function(model, fitfram, ci.lvl, linv, type, terms, ty
 
 
 
+# predictions for brmsfit ----
+
+#' @importFrom brms fitted
+#' @importFrom brms posterior_predict
+get_predictions_brmsfit <- function(model, fitfram, ci.lvl, type, faminfo, ppd, ...) {
+  # check if pkg is available
+  if (!requireNamespace("brms", quietly = TRUE)) {
+    stop("Package `brms` is required to compute predictions.", call. = F)
+  }
+
+  # does user want standard errors?
+  se <- !is.null(ci.lvl) && !is.na(ci.lvl)
+
+  # check whether predictions should be conditioned
+  # on random effects (grouping level) or not.
+  if (type != "fe")
+    ref <- NULL
+  else
+    ref <- NA
+
+  # compute posterior predictions
+  if (ppd) {
+    # get posterior predictions
+    prdat <- brms::posterior_predict(
+      model,
+      newdata = fitfram,
+      re_formula = ref,
+      ...
+    )
+    class(prdat) <- c("ppd", "matrix")
+  } else {
+    # get fitted values
+    # note that these are not best practice for inferences,
+    # because they don't take the uncertainty of the Sd into account
+    prdat <- brms::fitted(
+      model,
+      summary = FALSE,
+      newdata = fitfram,
+      re_formula = ref,
+      ...
+    )
+    class(prdat) <- c("ppd", "matrix")
+    # tell user
+    message("Note: uncertainty of error terms are not taken into account. You may want to use `brms::posterior_predict()`, i.e., set 'ppd' as TRUE.")
+  }
+
+  # we have a list of 4000 samples, so we need to coerce to data frame
+  prdat <- tibble::as_tibble(prdat)
+
+  # for models with binomial outcome, we just have 0 and 1 as predictions
+  # so we need to
+  if (faminfo$family != "gaussian" && ppd) {
+    # compute mean as "most probable estimate"
+    fitfram$predicted <- purrr::map_dbl(prdat, mean)
+
+    # can't compute SE, because we would need many replicates
+    # of the posterior predicted distribution
+    se <- FALSE
+    message("For non-gaussian models and if `ppd = TRUE`, no confidence intervals are calculated.")
+  } else {
+    # compute median, as "most probable estimate"
+    fitfram$predicted <- purrr::map_dbl(prdat, stats::median)
+
+    # compute HDI, as alternative to CI
+    hdi <- prdat %>%
+      purrr::map_df(~ sjstats::hdi(.x, prob = ci.lvl)) %>%
+      sjmisc::rotate_df()
+  }
+
+  if (se) {
+    # bind HDI
+    fitfram$conf.low <- hdi[[1]]
+    fitfram$conf.high <- hdi[[2]]
+  } else {
+    # no CI
+    fitfram$conf.low <- NA
+    fitfram$conf.high <- NA
+  }
+
+  fitfram
+}
+
+
 # predictions for stanreg ----
 
 #' @importFrom tibble as_tibble
@@ -430,7 +516,7 @@ get_predictions_stanreg <- function(model, fitfram, ci.lvl, type, faminfo, ppd, 
   # for models with binomial outcome, we just have 0 and 1 as predictions
   # so we need to
   if (faminfo$family != "gaussian" && ppd) {
-    # compute median, as "most probable estimate"
+    # compute mean as "most probable estimate"
     fitfram$predicted <- purrr::map_dbl(prdat, mean)
 
     # can't compute SE, because we would need many replicates
@@ -438,7 +524,7 @@ get_predictions_stanreg <- function(model, fitfram, ci.lvl, type, faminfo, ppd, 
     se <- FALSE
     message("For non-gaussian models and if `ppd = TRUE`, no confidence intervals are calculated.")
   } else {
-    # compute median, as "most probable estimate"
+    # compute median as "most probable estimate"
     fitfram$predicted <- purrr::map_dbl(prdat, stats::median)
 
     # compute HDI, as alternative to CI

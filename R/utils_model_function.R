@@ -24,6 +24,7 @@ get_model_function <- function(model) {
     inherits(model, "nlmerMod") ~ "lm",
     inherits(model, c("zeroinfl", "hurdle")) ~ "glm",
     inherits(model, c("lmerMod", "merModLmerTest")) ~ "lm",
+    inherits(model, "brmsfit") ~ "glm",
     TRUE ~ "glm"
   )
 }
@@ -55,6 +56,7 @@ get_predict_function <- function(model) {
     inherits(model, "truncreg") ~ "truncreg",
     inherits(model, "coxph") ~ "coxph",
     inherits(model, c("zeroinfl", "hurdle")) ~ "zeroinfl",
+    inherits(model, "brmsfit") ~ "brmsfit",
     TRUE ~ "generic"
   )
 }
